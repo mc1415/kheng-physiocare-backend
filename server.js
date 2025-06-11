@@ -15,8 +15,23 @@ const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // 3. Define Middleware
-app.use(express.static(path.join(__dirname, '')));
 app.use(express.json());
+
+const allowedOrigins = [
+  'https://kheng-physiocare.netlify.app/', 
+  'http://127.0.0.1:5500', // For local testing if you use Live Server
+  'http://localhost:8888'  // For local testing with `netlify dev`
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  }
+}));
 
 // 4. Define API Routes
 
