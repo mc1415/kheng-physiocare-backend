@@ -566,7 +566,7 @@ app.patch('/api/invoices/:id', async (req, res) => {
     const { id } = req.params;
     console.log(`Received request to update invoice ${id}.`);
     
-    const { patientId, status, items } = req.body;
+    const { patientId, status, items, diagnostic } = req.body;
 
     // In a real application, you'd wrap these steps in a "transaction"
     // to ensure that if one step fails, they all get rolled back.
