@@ -3,6 +3,7 @@
 // 1. Import Dependencies
 const express = require('express');
 const path = require('path');
+const cors = require('cors')
 const { createClient } = require('@supabase/supabase-js');
 require('dotenv').config();
 
