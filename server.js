@@ -284,7 +284,7 @@ app.post('/api/invoices', async (req, res) => {
 
     const { data: newInvoice, error: invoiceError } = await supabase
         .from('invoices')
-        .insert({ patient_id: patientId, appointment_id: appointmentId, total_amount, status })
+        .insert({ patient_id: patientId, appointment_id: appointmentId, total_amount, status, diagnostic: diagnostic })
         .select().single();
 
     if (invoiceError) {
@@ -591,7 +591,8 @@ app.patch('/api/invoices/:id', async (req, res) => {
         .update({
             patient_id: patientId,
             total_amount: total_amount,
-            status: status
+            status: status,
+            diagnostic: diagnostic
         })
         .eq('id', id);
 
