@@ -132,7 +132,7 @@ app.post('/api/staff', async (req, res) => {
 // Get All Patients (This version with dynamic Last Visit is correct)
 app.get('/api/patients', async (req, res) => {
     console.log('Received request to get all patients.');
-    const { data: patients, error: patientsError } = await supabase.from('patients').select(`id, full_name, phone_number, avatar_url, staff (id, full_name)`).order('id', { ascending: true });
+    const { data: patients, error: patientsError } = await supabase.from('patients').select(`id, full_name, phone_number, avatar_url, gender, staff (id, full_name)`).order('id', { ascending: true });
     if (patientsError) {
         console.error('Error fetching patient data:', patientsError);
         return res.status(500).json({ success: false, message: 'Failed to fetch patient data.' });
