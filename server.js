@@ -322,10 +322,10 @@ app.post('/api/invoices', async (req, res) => {
 // Get All Invoices Route
 app.get('/api/invoices', async (req, res) => {
     console.log('Received request to get all invoices.');
-    const { data, error } = await supabase.from('invoices').select('*, patients (id, full_name, date_of_birth, gender)').order('id', { ascending: false });
+    const { data, error } = await supabase.from('invoices').select('id, created_at, total_amount, status, patients ( full_name )').order('id', { ascending: false });
     if (error) { console.error('Error fetching invoices:', error.message); return res.status(500).json({ success: false, message: 'Failed to fetch invoices.' }); }
     const responseData = data.map(inv => ({ id: `#INV-${inv.id.toString().padStart(5, '0')}`, patientName: inv.patients ? inv.patients.full_name : 'Unknown Patient', date: new Date(inv.created_at).toISOString().split('T')[0], amount: inv.total_amount, status: inv.status }));
-    res.status(200).json({ success: true, data: data });
+    res.status(200).json({ success: true, data: responseData });
 });
 
 // --- Get All Products Route (Corrected) ---
