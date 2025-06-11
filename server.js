@@ -19,7 +19,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 app.use(express.json());
 
 const allowedOrigins = [
-  'https://kheng-physiocare.netlify.app/', 
+  'https://kheng-physiocare.netlify.app', 
   'http://127.0.0.1:5500', // For local testing if you use Live Server
   'http://localhost:8888'  // For local testing with `netlify dev`
 ];
