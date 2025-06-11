@@ -278,7 +278,7 @@ app.get('/api/dashboard/advanced-stats', async (req, res) => {
 app.post('/api/invoices', async (req, res) => {
     console.log('Received request to create a new invoice.');
 
-    const { patientId, appointmentId, status, items, inventoryUpdates } = req.body;
+    const { patientId, appointmentId, status, items, inventoryUpdates, diagnostic} = req.body;
 
     const total_amount = items.reduce((sum, item) => sum + (parseFloat(item.quantity || 1) * parseFloat(item.price || 0)), 0);
 
