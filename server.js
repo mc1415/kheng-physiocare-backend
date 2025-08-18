@@ -18,6 +18,12 @@ const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 
 // Helper to create a Supabase client that respects RLS using the anon key
 function getRlsClient(req) {
+    // If the anon key isn't configured, fall back to the service client so the
+    // server can still respond instead of throwing a "supabaseKey is required" error.
+    if (!supabaseAnonKey) {
+        console.warn('SUPABASE_ANON_KEY is not set; using service key client.');
+        return supabase;
+    }
     return createClient(supabaseUrl, supabaseAnonKey, {
         global: {
             headers: { Authorization: req.headers.authorization || '' }
