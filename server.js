@@ -14,6 +14,16 @@ const PORT = 3000;
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+
+// Helper to create a Supabase client that respects RLS using the anon key
+function getRlsClient(req) {
+    return createClient(supabaseUrl, supabaseAnonKey, {
+        global: {
+            headers: { Authorization: req.headers.authorization || '' }
+        }
+    });
+}
 
 // 3. Define Middleware
 app.use(express.json());
@@ -652,6 +662,52 @@ app.delete('/api/invoices/:id', async (req, res) => {
     }
 
     res.status(200).json({ success: true, message: 'Invoice deleted successfully!' });
+});
+
+// --- Exercise Management Routes ---
+app.get('/api/exercises', async (req, res) => {
+    const supabaseRls = getRlsClient(req);
+    const { data, error } = await supabaseRls.from('exercises').select('*');
+    if (error) {
+        console.error('Error fetching exercises:', error.message);
+        return res.status(500).json({ success: false, message: 'Failed to fetch exercises.' });
+    }
+    res.status(200).json({ success: true, data });
+});
+
+app.post('/api/exercises', async (req, res) => {
+    const supabaseRls = getRlsClient(req);
+    const { data, error } = await supabaseRls
+        .from('exercises')
+        .insert({
+            name: req.body.name,
+            instructions: req.body.instructions,
+            video_url: req.body.video_url
+        })
+        .select()
+        .single();
+    if (error) {
+        console.error('Error creating exercise:', error.message);
+        return res.status(500).json({ success: false, message: 'Failed to create exercise.' });
+    }
+    res.status(201).json({ success: true, data });
+});
+
+app.post('/api/assigned-exercises', async (req, res) => {
+    const supabaseRls = getRlsClient(req);
+    const { data, error } = await supabaseRls
+        .from('assigned_exercises')
+        .insert({
+            patient_id: req.body.patient_id,
+            exercise_id: req.body.exercise_id
+        })
+        .select()
+        .single();
+    if (error) {
+        console.error('Error assigning exercise:', error.message);
+        return res.status(500).json({ success: false, message: 'Failed to assign exercise.' });
+    }
+    res.status(201).json({ success: true, data });
 });
 
 // 1. GET Clinic Settings
