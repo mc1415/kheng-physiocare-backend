@@ -29,27 +29,10 @@ function getRlsClient(req) {
 app.use(express.json());
 
 // CORS configuration
-// Allow known front-end origins, but avoid throwing errors for others to
-// prevent 403 responses that block access. This still returns the CORS header
-// for the allowed origins while letting other requests pass through so that
-// authentication proxies or other services can reach the API without being
-// rejected outright.
-const allowedOrigins = [
-  'https://kheng-physiocare.netlify.app',
-  'http://127.0.0.1:5500', // For local testing if you use Live Server
-  'http://localhost:8888'  // For local testing with `netlify dev`
-];
-
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    // Disallowed origins simply won't receive CORS headers, but the request
-    // won't be blocked with a 403 status.
-    return callback(null, true);
-  }
-}));
+// Allow all origins and handle preflight requests so the frontend
+// can call this API without browser CORS errors.
+app.use(cors());
+app.options('*', cors());
 
 // 4. Define API Routes
 
@@ -61,6 +44,26 @@ app.get('/', (req, res) => {
 // Test route
 app.get('/api/test', (req, res) => {
     res.json({ message: 'API is connected and running!', timestamp: new Date().toISOString() });
+});
+
+// General login route that proxies authentication to Supabase
+app.post('/api/login', async (req, res) => {
+    const { email, password } = req.body;
+    try {
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) {
+            console.error('Supabase login error:', error.message);
+            return res.status(401).json({ success: false, message: error.message });
+        }
+        res.status(200).json({
+            success: true,
+            user: { id: data.user.id, email: data.user.email },
+            token: data.session.access_token
+        });
+    } catch (err) {
+        console.error('Unexpected login error:', err);
+        res.status(500).json({ success: false, message: 'Login failed' });
+    }
 });
 
 // Admin Login Route
