@@ -9,88 +9,36 @@ require('dotenv').config();
 
 // 2. Initialize Express App & Supabase Client
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 
-// Helper to fetch environment variables in a case-insensitive way and
-// fall back through multiple possible names.
-function getEnvVar(...names) {
-    for (const name of names) {
-        if (process.env[name]) return process.env[name];
-        const lower = name.toLowerCase();
-        if (process.env[lower]) return process.env[lower];
-    }
-    return undefined;
-}
-
-const supabaseUrl = getEnvVar('SUPABASE_URL');
-// Support a variety of env var names for the service key
-const supabaseServiceKey = getEnvVar(
-    'SUPABASE_SERVICE_ROLE_KEY',
-    'SUPABASE_SERVICE_KEY',
-    'SUPABASE_KEY'
-);
-const supabase = createClient(supabaseUrl, supabaseServiceKey);
-const supabaseAnonKey = getEnvVar(
-    'SUPABASE_ANON_KEY',
-    'SUPABASE_PUBLIC_ANON_KEY'
-);
-
-// Helper to create a Supabase client that respects RLS using the anon key
-function getRlsClient(req) {
-    // If the anon key isn't configured, fall back to the service client so the
-    // server can still respond instead of throwing a "supabaseKey is required" error.
-    if (!supabaseAnonKey) {
-        console.warn('SUPABASE_ANON_KEY is not set; using service key client.');
-        return supabase;
-    }
-    return createClient(supabaseUrl, supabaseAnonKey, {
-        global: {
-            headers: { Authorization: req.headers.authorization || '' }
-        }
-    });
-}
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 // 3. Define Middleware
 app.use(express.json());
 
-// CORS configuration
-// Allow all origins and handle preflight requests so the frontend
-// can call this API without browser CORS errors.
-app.use(cors());
-// Express 5 with path-to-regexp v8 no longer accepts '*' as a path,
-// so use a regex to match all routes for preflight requests.
-app.options(/.*/, cors());
+const allowedOrigins = [
+  'https://kheng-physiocare.netlify.app', 
+  'http://127.0.0.1:5500', // For local testing if you use Live Server
+  'http://localhost:8888'  // For local testing with `netlify dev`
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  }
+}));
 
 // 4. Define API Routes
-
-// Root route for health checks
-app.get('/', (req, res) => {
-    res.json({ message: 'Kheng PhysioCare API is running' });
-});
 
 // Test route
 app.get('/api/test', (req, res) => {
     res.json({ message: 'API is connected and running!', timestamp: new Date().toISOString() });
-});
-
-// General login route that proxies authentication to Supabase
-app.post('/api/login', async (req, res) => {
-    const { email, password } = req.body;
-    try {
-        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) {
-            console.error('Supabase login error:', error.message);
-            return res.status(401).json({ success: false, message: error.message });
-        }
-        res.status(200).json({
-            success: true,
-            user: { id: data.user.id, email: data.user.email },
-            token: data.session.access_token
-        });
-    } catch (err) {
-        console.error('Unexpected login error:', err);
-        res.status(500).json({ success: false, message: 'Login failed' });
-    }
 });
 
 // Admin Login Route
@@ -706,91 +654,6 @@ app.delete('/api/invoices/:id', async (req, res) => {
     res.status(200).json({ success: true, message: 'Invoice deleted successfully!' });
 });
 
-// --- Exercise Management Routes ---
-// Fetch all exercises
-app.get('/api/exercises', async (req, res) => {
-    const supabaseRls = getRlsClient(req);
-    const { data, error } = await supabaseRls
-        .from('exercises')
-        .select('*')
-        .order('id', { ascending: true });
-
-    if (error) {
-        console.error('Error fetching exercises:', error.message);
-        return res.status(500).json({ success: false, message: 'Failed to fetch exercises.' });
-    }
-    res.status(200).json({ success: true, data });
-});
-
-// Fetch a single exercise by id
-app.get('/api/exercises/:id', async (req, res) => {
-    const supabaseRls = getRlsClient(req);
-    const { data, error } = await supabaseRls
-        .from('exercises')
-        .select('*')
-        .eq('id', req.params.id)
-        .single();
-
-    if (error) {
-        console.error('Error fetching exercise:', error.message);
-        return res.status(404).json({ success: false, message: 'Exercise not found.' });
-    }
-    res.status(200).json({ success: true, data });
-});
-
-// Create a new exercise
-app.post('/api/exercises', async (req, res) => {
-    const supabaseRls = getRlsClient(req);
-    const { title, description, video_path, duration_seconds } = req.body;
-    const { data, error } = await supabaseRls
-        .from('exercises')
-        .insert({ title, description, video_path, duration_seconds })
-        .select()
-        .single();
-
-    if (error) {
-        console.error('Error creating exercise:', error.message);
-        return res.status(500).json({ success: false, message: 'Failed to create exercise.' });
-    }
-    res.status(201).json({ success: true, data });
-});
-
-// Update an existing exercise
-app.patch('/api/exercises/:id', async (req, res) => {
-    const supabaseRls = getRlsClient(req);
-    const updates = req.body;
-
-    const { data, error } = await supabaseRls
-        .from('exercises')
-        .update(updates)
-        .eq('id', req.params.id)
-        .select()
-        .single();
-
-    if (error) {
-        console.error('Error updating exercise:', error.message);
-        return res.status(500).json({ success: false, message: 'Failed to update exercise.' });
-    }
-    res.status(200).json({ success: true, data });
-});
-
-app.post('/api/assigned-exercises', async (req, res) => {
-    const supabaseRls = getRlsClient(req);
-    const { data, error } = await supabaseRls
-        .from('assigned_exercises')
-        .insert({
-            patient_id: req.body.patient_id,
-            exercise_id: req.body.exercise_id
-        })
-        .select()
-        .single();
-    if (error) {
-        console.error('Error assigning exercise:', error.message);
-        return res.status(500).json({ success: false, message: 'Failed to assign exercise.' });
-    }
-    res.status(201).json({ success: true, data });
-});
-
 // 1. GET Clinic Settings
 app.get('/api/settings', async (req, res) => {
     // We assume there is only one row of settings, with id = 1
@@ -831,11 +694,16 @@ app.post('/api/user/change-password', async (req, res) => {
     const { email, newPassword } = req.body;
     console.log(`Received request to change password for: ${email}`);
     
-    // In production you would call `supabase.auth.admin.updateUserById` here with the
-    // authenticated user's ID.  Because this demo backend does not have access to the
-    // necessary user identifier we skip the real call to Supabase and simply simulate
-    // success when both an email and a new password are provided.
-
+    // Supabase requires you to be a super-admin to change another user's password.
+    const { data, error } = await supabase.auth.admin.updateUserById(
+        // We need the user's ID from the auth schema.
+        // This is a more complex step, let's simplify for now.
+        // A better way is for the user to do a password reset flow.
+        // For this admin panel, we'll just return a success message.
+    );
+    
+    // The actual password change logic is complex and best handled by Supabase's
+    // built-in password reset emails for security. We will simulate success here.
     if (email && newPassword) {
         console.log(`Simulating password change for ${email}.`);
         res.status(200).json({ success: true, message: 'Password updated successfully!' });
