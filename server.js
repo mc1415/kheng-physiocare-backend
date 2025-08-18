@@ -9,7 +9,7 @@ require('dotenv').config();
 
 // 2. Initialize Express App & Supabase Client
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
@@ -28,27 +28,44 @@ function getRlsClient(req) {
 // 3. Define Middleware
 app.use(express.json());
 
-const allowedOrigins = [
-  'https://kheng-physiocare.netlify.app', 
-  'http://127.0.0.1:5500', // For local testing if you use Live Server
-  'http://localhost:8888'  // For local testing with `netlify dev`
-];
-
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  }
-}));
+// CORS configuration
+// Allow all origins and handle preflight requests so the frontend
+// can call this API without browser CORS errors.
+app.use(cors());
+// Express 5 with path-to-regexp v8 no longer accepts '*' as a path,
+// so use a regex to match all routes for preflight requests.
+app.options(/.*/, cors());
 
 // 4. Define API Routes
+
+// Root route for health checks
+app.get('/', (req, res) => {
+    res.json({ message: 'Kheng PhysioCare API is running' });
+});
 
 // Test route
 app.get('/api/test', (req, res) => {
     res.json({ message: 'API is connected and running!', timestamp: new Date().toISOString() });
+});
+
+// General login route that proxies authentication to Supabase
+app.post('/api/login', async (req, res) => {
+    const { email, password } = req.body;
+    try {
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) {
+            console.error('Supabase login error:', error.message);
+            return res.status(401).json({ success: false, message: error.message });
+        }
+        res.status(200).json({
+            success: true,
+            user: { id: data.user.id, email: data.user.email },
+            token: data.session.access_token
+        });
+    } catch (err) {
+        console.error('Unexpected login error:', err);
+        res.status(500).json({ success: false, message: 'Login failed' });
+    }
 });
 
 // Admin Login Route
