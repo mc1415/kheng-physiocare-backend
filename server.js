@@ -688,9 +688,14 @@ app.delete('/api/invoices/:id', async (req, res) => {
 });
 
 // --- Exercise Management Routes ---
+// Fetch all exercises
 app.get('/api/exercises', async (req, res) => {
     const supabaseRls = getRlsClient(req);
-    const { data, error } = await supabaseRls.from('exercises').select('*');
+    const { data, error } = await supabaseRls
+        .from('exercises')
+        .select('*')
+        .order('id', { ascending: true });
+
     if (error) {
         console.error('Error fetching exercises:', error.message);
         return res.status(500).json({ success: false, message: 'Failed to fetch exercises.' });
@@ -698,22 +703,56 @@ app.get('/api/exercises', async (req, res) => {
     res.status(200).json({ success: true, data });
 });
 
-app.post('/api/exercises', async (req, res) => {
+// Fetch a single exercise by id
+app.get('/api/exercises/:id', async (req, res) => {
     const supabaseRls = getRlsClient(req);
     const { data, error } = await supabaseRls
         .from('exercises')
-        .insert({
-            name: req.body.name,
-            instructions: req.body.instructions,
-            video_url: req.body.video_url
-        })
+        .select('*')
+        .eq('id', req.params.id)
+        .single();
+
+    if (error) {
+        console.error('Error fetching exercise:', error.message);
+        return res.status(404).json({ success: false, message: 'Exercise not found.' });
+    }
+    res.status(200).json({ success: true, data });
+});
+
+// Create a new exercise
+app.post('/api/exercises', async (req, res) => {
+    const supabaseRls = getRlsClient(req);
+    const { title, description, video_path, duration_seconds } = req.body;
+    const { data, error } = await supabaseRls
+        .from('exercises')
+        .insert({ title, description, video_path, duration_seconds })
         .select()
         .single();
+
     if (error) {
         console.error('Error creating exercise:', error.message);
         return res.status(500).json({ success: false, message: 'Failed to create exercise.' });
     }
     res.status(201).json({ success: true, data });
+});
+
+// Update an existing exercise
+app.patch('/api/exercises/:id', async (req, res) => {
+    const supabaseRls = getRlsClient(req);
+    const updates = req.body;
+
+    const { data, error } = await supabaseRls
+        .from('exercises')
+        .update(updates)
+        .eq('id', req.params.id)
+        .select()
+        .single();
+
+    if (error) {
+        console.error('Error updating exercise:', error.message);
+        return res.status(500).json({ success: false, message: 'Failed to update exercise.' });
+    }
+    res.status(200).json({ success: true, data });
 });
 
 app.post('/api/assigned-exercises', async (req, res) => {
@@ -773,16 +812,11 @@ app.post('/api/user/change-password', async (req, res) => {
     const { email, newPassword } = req.body;
     console.log(`Received request to change password for: ${email}`);
     
-    // Supabase requires you to be a super-admin to change another user's password.
-    const { data, error } = await supabase.auth.admin.updateUserById(
-        // We need the user's ID from the auth schema.
-        // This is a more complex step, let's simplify for now.
-        // A better way is for the user to do a password reset flow.
-        // For this admin panel, we'll just return a success message.
-    );
-    
-    // The actual password change logic is complex and best handled by Supabase's
-    // built-in password reset emails for security. We will simulate success here.
+    // In production you would call `supabase.auth.admin.updateUserById` here with the
+    // authenticated user's ID.  Because this demo backend does not have access to the
+    // necessary user identifier we skip the real call to Supabase and simply simulate
+    // success when both an email and a new password are provided.
+
     if (email && newPassword) {
         console.log(`Simulating password change for ${email}.`);
         res.status(200).json({ success: true, message: 'Password updated successfully!' });
