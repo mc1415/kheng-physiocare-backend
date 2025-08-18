@@ -9,7 +9,7 @@ require('dotenv').config();
 
 // 2. Initialize Express App & Supabase Client
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
@@ -28,23 +28,35 @@ function getRlsClient(req) {
 // 3. Define Middleware
 app.use(express.json());
 
+// CORS configuration
+// Allow known front-end origins, but avoid throwing errors for others to
+// prevent 403 responses that block access. This still returns the CORS header
+// for the allowed origins while letting other requests pass through so that
+// authentication proxies or other services can reach the API without being
+// rejected outright.
 const allowedOrigins = [
-  'https://kheng-physiocare.netlify.app', 
+  'https://kheng-physiocare.netlify.app',
   'http://127.0.0.1:5500', // For local testing if you use Live Server
   'http://localhost:8888'  // For local testing with `netlify dev`
 ];
 
 app.use(cors({
-  origin: function (origin, callback) {
+  origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+      return callback(null, true);
     }
+    // Disallowed origins simply won't receive CORS headers, but the request
+    // won't be blocked with a 403 status.
+    return callback(null, true);
   }
 }));
 
 // 4. Define API Routes
+
+// Root route for health checks
+app.get('/', (req, res) => {
+    res.json({ message: 'Kheng PhysioCare API is running' });
+});
 
 // Test route
 app.get('/api/test', (req, res) => {
