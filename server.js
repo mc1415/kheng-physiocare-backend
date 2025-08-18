@@ -32,7 +32,9 @@ app.use(express.json());
 // Allow all origins and handle preflight requests so the frontend
 // can call this API without browser CORS errors.
 app.use(cors());
-app.options('*', cors());
+// Express 5 with path-to-regexp v8 no longer accepts '*' as a path,
+// so use a regex to match all routes for preflight requests.
+app.options(/.*/, cors());
 
 // 4. Define API Routes
 
