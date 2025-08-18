@@ -11,10 +11,29 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey);
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+// Helper to fetch environment variables in a case-insensitive way and
+// fall back through multiple possible names.
+function getEnvVar(...names) {
+    for (const name of names) {
+        if (process.env[name]) return process.env[name];
+        const lower = name.toLowerCase();
+        if (process.env[lower]) return process.env[lower];
+    }
+    return undefined;
+}
+
+const supabaseUrl = getEnvVar('SUPABASE_URL');
+// Support a variety of env var names for the service key
+const supabaseServiceKey = getEnvVar(
+    'SUPABASE_SERVICE_ROLE_KEY',
+    'SUPABASE_SERVICE_KEY',
+    'SUPABASE_KEY'
+);
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
+const supabaseAnonKey = getEnvVar(
+    'SUPABASE_ANON_KEY',
+    'SUPABASE_PUBLIC_ANON_KEY'
+);
 
 // Helper to create a Supabase client that respects RLS using the anon key
 function getRlsClient(req) {
