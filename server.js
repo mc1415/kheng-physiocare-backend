@@ -806,41 +806,39 @@ app.get('/api/portal/dashboard', authenticatePatient, async (req, res) => {
     console.log(`Fetching dashboard data for patient with auth_user_id: ${patientAuthId}`);
 
     try {
-        // Find the patient's internal ID from their auth ID
         const { data: patient, error: patientError } = await supabase
-            .from('patients')
-            .select('id, full_name, phone_number, email, address, avatar_url')
-            .eq('auth_user_id', patientAuthId)
-            .single();
+            .from('patients').select('id, full_name').eq('auth_user_id', patientAuthId).single();
 
         if (patientError || !patient) {
             return res.status(404).json({ success: false, message: 'Patient profile not found.' });
         }
         
-        const patientId = patient.id; // The internal patient ID (bigint)
-
-        // Fetch upcoming and past appointments for this patient
+        const patientId = patient.id;
         const now = new Date().toISOString();
-        const [appointmentsRes, assignedExercisesRes] = await Promise.all([
-            supabase.from('appointments').select('start_time, end_time, status, notes').eq('patient_id', patientId).order('start_time', { ascending: false }),
-            supabase.from('assigned_exercises').select('*, exercises(title, description, video_path)').eq('patient_id', patientId)
+
+        // Run all queries concurrently
+        const [appointmentsRes, assignedExercisesRes, clinicSettingsRes] = await Promise.all([
+            // Join with staff to get the therapist's name
+            supabase.from('appointments').select('start_time, status, notes, staff(full_name)').eq('patient_id', patientId).order('start_time', { ascending: false }),
+            supabase.from('assigned_exercises').select('*, exercises(title, description, video_path)').eq('patient_id', patientId),
+            supabase.from('settings').select('clinic_name, phone_number, address').eq('id', 1).single() // Fetch clinic info
         ]);
         
-        if (appointmentsRes.error || assignedExercisesRes.error) {
-            console.error("Error fetching portal details:", appointmentsRes.error || assignedExercisesRes.error);
+        if (appointmentsRes.error || assignedExercisesRes.error || clinicSettingsRes.error) {
+            console.error("Error fetching portal details:", appointmentsRes.error || assignedExercisesRes.error || clinicSettingsRes.error);
             return res.status(500).json({ success: false, message: 'Failed to fetch dashboard data.' });
         }
 
-        // Process appointments
         const allAppointments = appointmentsRes.data || [];
-        const upcomingAppointments = allAppointments.filter(a => new Date(a.start_time) >= new Date(now)).sort((a,b) => new Date(a.start_time) - new Date(b.start_time));
-        const pastAppointments = allAppointments.filter(a => new Date(a.start_time) < new Date(now));
+        const upcomingAppointments = allAppointments.filter(a => new Date(a.start_time) >= new Date()).sort((a,b) => new Date(a.start_time) - new Date(b.start_time));
+        const pastAppointments = allAppointments.filter(a => new Date(a.start_time) < new Date());
         
         const responseData = {
             profile: patient,
             nextAppointment: upcomingAppointments[0] || null,
             appointmentHistory: pastAppointments,
-            exercises: assignedExercisesRes.data || []
+            exercises: assignedExercisesRes.data || [],
+            clinic: clinicSettingsRes.data // Add clinic info to response
         };
         
         res.status(200).json({ success: true, data: responseData });
@@ -849,6 +847,43 @@ app.get('/api/portal/dashboard', authenticatePatient, async (req, res) => {
         console.error('CRITICAL Error in /api/portal/dashboard endpoint:', error);
         return res.status(500).json({ success: false, message: 'A server error occurred.' });
     }
+});
+
+// --- NEW: Mark an exercise as completed for today ---
+app.patch('/api/assigned-exercises/:id/complete', authenticatePatient, async (req, res) => {
+    const { id: assignmentId } = req.params;
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+
+    // Use an RPC function for this atomic operation for safety.
+    // First, let's create the function in Supabase if it doesn't exist.
+    // For now, we'll do it in JS, but an RPC is better for production.
+
+    // 1. Get the current list of completed dates
+    const { data: current, error: fetchError } = await supabase
+        .from('assigned_exercises')
+        .select('completed_dates')
+        .eq('id', assignmentId)
+        .single();
+
+    if (fetchError) return res.status(500).json({ success: false, message: "Could not find exercise assignment." });
+
+    // 2. Add today's date if it's not already there
+    const completedDates = current.completed_dates || [];
+    if (!completedDates.includes(today)) {
+        completedDates.push(today);
+    }
+
+    // 3. Update the record
+    const { data, error: updateError } = await supabase
+        .from('assigned_exercises')
+        .update({ completed_dates: completedDates })
+        .eq('id', assignmentId)
+        .select()
+        .single();
+
+    if (updateError) return res.status(500).json({ success: false, message: "Failed to update exercise." });
+
+    res.status(200).json({ success: true, data });
 });
 
 // In server.js, add these new routes, for example after the Products API
