@@ -714,6 +714,117 @@ app.post('/api/user/change-password', async (req, res) => {
 
 // 5. Start the Server
 
+// --- PATIENT PORTAL API ---
+
+// Patient Login Route
+app.post('/api/patient/login', async (req, res) => {
+    const { email, password } = req.body;
+    console.log(`Received PATIENT login attempt for email: ${email}`);
+
+    // Step 1: Sign in the user using Supabase Auth
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email, password });
+
+    if (authError) {
+        console.error('Supabase patient login error:', authError.message);
+        return res.status(401).json({ success: false, message: authError.message });
+    }
+
+    if (authData.user) {
+        // Step 2: Verify they have a corresponding profile in the 'patients' table
+        const { data: patientProfile, error: profileError } = await supabase
+            .from('patients')
+            .select('full_name')
+            .eq('auth_user_id', authData.user.id) // IMPORTANT: Check against the auth UUID
+            .single();
+
+        if (profileError || !patientProfile) {
+            console.error('Login successful, but no patient profile found for user:', authData.user.id);
+            // It's crucial to sign them out again if they don't have a patient profile
+            await supabase.auth.signOut(); 
+            return res.status(403).json({ success: false, message: "Authentication successful, but you are not registered as a patient." });
+        }
+
+        console.log('Patient login and profile fetch successful for:', patientProfile.full_name);
+        res.status(200).json({ 
+            success: true, 
+            message: 'Login successful', 
+            token: authData.session.access_token,
+            user: { fullName: patientProfile.full_name }
+        });
+    } else {
+        return res.status(500).json({ success: false, message: "An unexpected error occurred during login." });
+    }
+});
+
+// Middleware to protect portal routes
+const authenticatePatient = async (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ success: false, message: 'Authentication token required.' });
+    }
+    const token = authHeader.split(' ')[1];
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+
+    if (error || !user) {
+        return res.status(401).json({ success: false, message: 'Invalid or expired token.' });
+    }
+    
+    // Attach the user to the request object so our endpoints can use it
+    req.user = user;
+    next();
+};
+
+// GET Patient's own profile, appointments, and exercises
+app.get('/api/portal/dashboard', authenticatePatient, async (req, res) => {
+    const patientAuthId = req.user.id;
+    console.log(`Fetching dashboard data for patient with auth_user_id: ${patientAuthId}`);
+
+    try {
+        // Find the patient's internal ID from their auth ID
+        const { data: patient, error: patientError } = await supabase
+            .from('patients')
+            .select('id, full_name, phone_number, email, address, avatar_url')
+            .eq('auth_user_id', patientAuthId)
+            .single();
+
+        if (patientError || !patient) {
+            return res.status(404).json({ success: false, message: 'Patient profile not found.' });
+        }
+        
+        const patientId = patient.id; // The internal patient ID (bigint)
+
+        // Fetch upcoming and past appointments for this patient
+        const now = new Date().toISOString();
+        const [appointmentsRes, assignedExercisesRes] = await Promise.all([
+            supabase.from('appointments').select('start_time, end_time, status, notes').eq('patient_id', patientId).order('start_time', { ascending: false }),
+            supabase.from('assigned_exercises').select('*, exercises(title, description, video_path)').eq('patient_id', patientId)
+        ]);
+        
+        if (appointmentsRes.error || assignedExercisesRes.error) {
+            console.error("Error fetching portal details:", appointmentsRes.error || assignedExercisesRes.error);
+            return res.status(500).json({ success: false, message: 'Failed to fetch dashboard data.' });
+        }
+
+        // Process appointments
+        const allAppointments = appointmentsRes.data || [];
+        const upcomingAppointments = allAppointments.filter(a => new Date(a.start_time) >= new Date(now)).sort((a,b) => new Date(a.start_time) - new Date(b.start_time));
+        const pastAppointments = allAppointments.filter(a => new Date(a.start_time) < new Date(now));
+        
+        const responseData = {
+            profile: patient,
+            nextAppointment: upcomingAppointments[0] || null,
+            appointmentHistory: pastAppointments,
+            exercises: assignedExercisesRes.data || []
+        };
+        
+        res.status(200).json({ success: true, data: responseData });
+
+    } catch (error) {
+        console.error('CRITICAL Error in /api/portal/dashboard endpoint:', error);
+        return res.status(500).json({ success: false, message: 'A server error occurred.' });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
 });
