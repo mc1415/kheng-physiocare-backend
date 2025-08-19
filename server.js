@@ -452,22 +452,20 @@ app.get('/api/appointments', async (req, res) => {
 
 // --- POST (Create) a New Appointment (Corrected) ---
 app.post('/api/appointments', async (req, res) => {
-    console.log('Received request to create appointment.');
+    console.log('Received request to create appointment with data:', req.body);
     const { title, start, end, therapist_id, patient_id, status } = req.body;
-    
+
     if (!patient_id) {
         return res.status(400).json({ success: false, message: 'A patient must be selected for the appointment.' });
     }
-    // The frontend sends a local time string like "2025-06-10T16:00".
-    // We convert it to a full ISO string, which Supabase understands correctly.
-    // This tells Supabase the time is in the server's local timezone, which it then converts to UTC.
-    
+
     const { data, error } = await supabase
         .from('appointments')
         .insert([{
           title: title,
-          start_time: start, // Use the string directly from the form
-          end_time: end,     // Use the string directly from the form
+          // THE FIX: Append the timezone offset for Cambodia (GMT+7)
+          start_time: start ? `${start}+07:00` : null,
+          end_time: end ? `${end}+07:00` : null,
           staff_id: therapist_id,
           patient_id: patient_id,
           status: status
@@ -496,8 +494,9 @@ app.patch('/api/appointments/:id', async (req, res) => {
         .from('appointments')
         .update({
           title: title,
-          start_time: start, // Use the string directly from the form
-          end_time: end,     // Use the string directly from the form
+          // THE FIX: Append the timezone offset for Cambodia (GMT+7)
+          start_time: start ? `${start}+07:00` : null,
+          end_time: end ? `${end}+07:00` : null,
           staff_id: therapist_id,
           patient_id: patient_id,
           status: status
