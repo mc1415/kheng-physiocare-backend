@@ -842,6 +842,76 @@ app.get('/api/portal/dashboard', authenticatePatient, async (req, res) => {
     }
 });
 
+// In server.js, add these new routes, for example after the Products API
+
+// --- EXERCISES API (Library Management) ---
+
+// GET all exercises
+app.get('/api/exercises', async (req, res) => {
+    const { data, error } = await supabase.from('exercises').select('*').order('title');
+    if (error) return res.status(500).json({ success: false, message: error.message });
+    res.status(200).json({ success: true, data });
+});
+
+// POST a new exercise
+app.post('/api/exercises', async (req, res) => {
+    const { data, error } = await supabase.from('exercises').insert(req.body).select().single();
+    if (error) return res.status(400).json({ success: false, message: error.message });
+    res.status(201).json({ success: true, data });
+});
+
+// PATCH an existing exercise
+app.patch('/api/exercises/:id', async (req, res) => {
+    const { id } = req.params;
+    const { data, error } = await supabase.from('exercises').update(req.body).eq('id', id).select().single();
+    if (error) return res.status(400).json({ success: false, message: error.message });
+    res.status(200).json({ success: true, data });
+});
+
+// DELETE an exercise
+app.delete('/api/exercises/:id', async (req, res) => {
+    const { id } = req.params;
+    const { error } = await supabase.from('exercises').delete().eq('id', id);
+    if (error) return res.status(500).json({ success: false, message: error.message });
+    res.status(200).json({ success: true, message: 'Exercise deleted.' });
+});
+
+// --- ASSIGNED EXERCISES API ---
+
+// GET assigned exercises for a specific patient
+app.get('/api/patients/:id/exercises', async (req, res) => {
+    const { id } = req.params;
+    const { data, error } = await supabase
+        .from('assigned_exercises')
+        .select('*, exercises(*)') // Join with the exercises table to get details
+        .eq('patient_id', id);
+    if (error) return res.status(500).json({ success: false, message: error.message });
+    res.status(200).json({ success: true, data });
+});
+
+// POST (assign) an exercise to a patient
+app.post('/api/patients/:id/exercises', async (req, res) => {
+    const { id: patient_id } = req.params;
+    const { exercise_id, notes, frequency_per_week } = req.body;
+    
+    // In a real app, you'd get prescribed_by from the logged-in admin's ID
+    const { data, error } = await supabase
+        .from('assigned_exercises')
+        .insert({ patient_id, exercise_id, notes, frequency_per_week })
+        .select().single();
+        
+    if (error) return res.status(400).json({ success: false, message: error.message });
+    res.status(201).json({ success: true, data });
+});
+
+// DELETE (un-assign) an exercise
+app.delete('/api/assigned-exercises/:assignmentId', async (req, res) => {
+    const { assignmentId } = req.params;
+    const { error } = await supabase.from('assigned_exercises').delete().eq('id', assignmentId);
+    if (error) return res.status(500).json({ success: false, message: error.message });
+    res.status(200).json({ success: true, message: 'Exercise unassigned.' });
+});
+
 app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
 });
