@@ -819,7 +819,7 @@ app.get('/api/portal/dashboard', authenticatePatient, async (req, res) => {
         // Run all queries concurrently
         const [appointmentsRes, assignedExercisesRes, clinicSettingsRes] = await Promise.all([
             // Join with staff to get the therapist's name
-            supabase.from('appointments').select('start_time, status, notes, staff(full_name)').eq('patient_id', patientId).order('start_time', { ascending: false }),
+            supabase.from('appointments').select('start_time, status, staff(full_name)').eq('patient_id', patientId).order('start_time', { ascending: false }),
             supabase.from('assigned_exercises').select('*, exercises(title, description, video_path)').eq('patient_id', patientId),
             supabase.from('settings').select('clinic_name, phone_number, address').eq('id', 1).single() // Fetch clinic info
         ]);
