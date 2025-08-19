@@ -321,10 +321,22 @@ app.post('/api/invoices', async (req, res) => {
 
 // Get All Invoices Route
 app.get('/api/invoices', async (req, res) => {
-    console.log('Received request to get all invoices.');
-    const { data, error } = await supabase.from('invoices').select('id, created_at, total_amount, status, patients ( full_name )').order('id', { ascending: false });
+    console.log('Received request to get invoices.');
+    
+    let query = supabase
+        .from('invoices')
+        .select('id, created_at, total_amount, status, patients ( full_name )');
+
+    if (req.query.patient_id) {
+        console.log(`Filtering invoices for patient_id: ${req.query.patient_id}`);
+        query = query.eq('patient_id', req.query.patient_id);
+    }
+
+    const { data, error } = await query.order('id', { ascending: false });
+
     if (error) { console.error('Error fetching invoices:', error.message); return res.status(500).json({ success: false, message: 'Failed to fetch invoices.' }); }
-    const responseData = data.map(inv => ({ id: `#INV-${inv.id.toString().padStart(5, '0')}`, patientName: inv.patients ? inv.patients.full_name : 'Unknown Patient', date: new Date(inv.created_at).toISOString().split('T')[0], amount: inv.total_amount, status: inv.status }));
+    
+    const responseData = data.map(inv => ({ id: `#INV-${inv.id.toString().padStart(5, '0')}`, raw_id: inv.id, patientName: inv.patients ? inv.patients.full_name : 'Unknown Patient', date: new Date(inv.created_at).toISOString().split('T')[0], amount: inv.total_amount, status: inv.status }));
     res.status(200).json({ success: true, data: responseData });
 });
 
@@ -404,40 +416,37 @@ app.patch('/api/products/:id', async (req, res) => {
 
 // GET All Appointments (Corrected for Calendar View)
 app.get('/api/appointments', async (req, res) => {
-    console.log('Received request to get all appointments.');
+    console.log('Received request to get appointments.');
     
-    // The select statement is correct and joins the staff name
-    const { data, error } = await supabase
+    let query = supabase
         .from('appointments')
-        .select(`
-            id,
-            start_time,
-            end_time,
-            title,
-            status,
-            patient_id,
-            staff ( id, full_name )
-        `);
+        .select(`id, start_time, end_time, title, status, patient_id, staff ( id, full_name )`);
+
+    // Check for patient_id filter from the query string
+    if (req.query.patient_id) {
+        console.log(`Filtering appointments for patient_id: ${req.query.patient_id}`);
+        query = query.eq('patient_id', req.query.patient_id);
+    }
+    
+    const { data, error } = await query.order('start_time', { ascending: false });
 
     if (error) {
         console.error('Error fetching appointments:', error.message);
         return res.status(500).json({ success: false, message: 'Failed to fetch appointments.' });
     }
 
-    // SIMPLIFIED MAPPING: We will rename the keys to what FullCalendar expects by default.
     const formattedEvents = data.map(app => ({
       id: app.id,
       title: app.title,
-      start: app.start_time, // Send the raw timestamp string
-      end: app.end_time,     // Send the raw timestamp string
+      start: app.start_time,
+      end: app.end_time,
       extendedProps: {
           status: app.status,
           therapist: app.staff ? app.staff.full_name : 'Unassigned',
           therapist_id: app.staff ? app.staff.id : null,
           patient_id: app.patient_id
       }
-  }));
-
+    }));
   res.status(200).json({ success: true, data: formattedEvents });
 });
 
@@ -910,6 +919,33 @@ app.delete('/api/assigned-exercises/:assignmentId', async (req, res) => {
     const { error } = await supabase.from('assigned_exercises').delete().eq('id', assignmentId);
     if (error) return res.status(500).json({ success: false, message: error.message });
     res.status(200).json({ success: true, message: 'Exercise unassigned.' });
+});
+
+app.get('/api/patients/:id/notes', async (req, res) => {
+    const { id } = req.params;
+    const { data, error } = await supabase
+        .from('clinical_notes')
+        .select('*, staff(full_name)')
+        .eq('patient_id', id)
+        .order('note_date', { ascending: false });
+        
+    if (error) return res.status(500).json({ success: false, message: error.message });
+    res.status(200).json({ success: true, data });
+});
+
+// POST a new note for a patient
+app.post('/api/patients/:id/notes', async (req, res) => {
+    const { id: patient_id } = req.params;
+    const noteData = req.body;
+    // In a real app, 'created_by' would come from the logged-in user's token
+    
+    const { data, error } = await supabase
+        .from('clinical_notes')
+        .insert({ ...noteData, patient_id })
+        .select().single();
+        
+    if (error) return res.status(400).json({ success: false, message: error.message });
+    res.status(201).json({ success: true, data });
 });
 
 app.listen(PORT, () => {
