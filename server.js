@@ -415,6 +415,7 @@ app.get('/api/appointments', async (req, res) => {
             end_time,
             title,
             status,
+            patient_id,
             staff ( id, full_name )
         `);
 
@@ -432,7 +433,8 @@ app.get('/api/appointments', async (req, res) => {
       extendedProps: {
           status: app.status,
           therapist: app.staff ? app.staff.full_name : 'Unassigned',
-          therapist_id: app.staff ? app.staff.id : null
+          therapist_id: app.staff ? app.staff.id : null,
+          patient_id: app.patient_id
       }
   }));
 
@@ -442,8 +444,11 @@ app.get('/api/appointments', async (req, res) => {
 // --- POST (Create) a New Appointment (Corrected) ---
 app.post('/api/appointments', async (req, res) => {
     console.log('Received request to create appointment.');
-    const { title, start, end, therapist_id, status } = req.body;
-
+    const { title, start, end, therapist_id, patient_id, status } = req.body;
+    
+    if (!patient_id) {
+        return res.status(400).json({ success: false, message: 'A patient must be selected for the appointment.' });
+    }
     // The frontend sends a local time string like "2025-06-10T16:00".
     // We convert it to a full ISO string, which Supabase understands correctly.
     // This tells Supabase the time is in the server's local timezone, which it then converts to UTC.
@@ -455,12 +460,16 @@ app.post('/api/appointments', async (req, res) => {
           start_time: start, // Use the string directly from the form
           end_time: end,     // Use the string directly from the form
           staff_id: therapist_id,
+          patient_id: patient_id,
           status: status
       }])
         .select()
         .single();
     
-    if (error) { /* ... error handling ... */ }
+    if (error) { 
+        console.error("Error creating appointment:", error);
+        return res.status(500).json({ success: false, message: error.message });
+    }
     res.status(201).json({ success: true, message: 'Appointment created!', data });
 });
 
@@ -468,7 +477,11 @@ app.post('/api/appointments', async (req, res) => {
 app.patch('/api/appointments/:id', async (req, res) => {
     const { id } = req.params;
     console.log(`Received request to update appointment ${id}.`);
-    const { title, start, end, therapist_id, status } = req.body;
+    const { title, start, end, therapist_id, patient_id, status } = req.body;
+
+    if (!patient_id) {
+        return res.status(400).json({ success: false, message: 'A patient must be selected for the appointment.' });
+    }
 
     const { data, error } = await supabase
         .from('appointments')
@@ -477,13 +490,17 @@ app.patch('/api/appointments/:id', async (req, res) => {
           start_time: start, // Use the string directly from the form
           end_time: end,     // Use the string directly from the form
           staff_id: therapist_id,
+          patient_id: patient_id,
           status: status
       })
         .eq('id', id)
         .select()
         .single();
 
-    if (error) { /* ... error handling ... */ }
+    if (error) {
+        console.error("Error updating appointment:", error);
+        return res.status(500).json({ success: false, message: error.message });
+     }
     res.status(200).json({ success: true, message: 'Appointment updated!', data });
 });
 
