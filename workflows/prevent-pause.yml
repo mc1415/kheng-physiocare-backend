@@ -1,0 +1,21 @@
+name: Supabase Keep-Alive Ping
+on:
+  schedule:
+    # This runs every Sunday at midnight (00:00 UTC).
+    # You can adjust this to be more frequent if desired. 
+    # Check crontab.guru for help with cron syntax.
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+jobs:
+  ping-database:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Make a GET request to Supabase API
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          curl -X GET "${SUPABASE_URL}/rest/v1/clinical_notes?select=id&limit=1" \
+          -H "apikey: ${SUPABASE_KEY}" \
+          -H "Authorization: Bearer ${SUPABASE_KEY}"
