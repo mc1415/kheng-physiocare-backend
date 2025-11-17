@@ -4,7 +4,7 @@ on:
     # This runs every Sunday at midnight (00:00 UTC).
     # You can adjust this to be more frequent if desired. 
     # Check crontab.guru for help with cron syntax.
-    - cron: '0 0 * * 0'
+    - cron: '0 0 * * 5'
   workflow_dispatch:
 
 jobs:
