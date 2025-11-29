@@ -278,45 +278,95 @@ app.get('/api/dashboard/advanced-stats', async (req, res) => {
 app.post('/api/invoices', async (req, res) => {
     console.log('Received request to create a new invoice.');
 
-    const { patientId, appointmentId, status, items, inventoryUpdates, diagnostic} = req.body;
+    try {
+        const {
+            patientId,
+            appointmentId,
+            status,
+            items = [],
+            inventoryUpdates = [],
+            diagnostic = '',
+            discount_type,
+            discount_value
+        } = req.body;
 
-    const total_amount = items.reduce((sum, item) => sum + (parseFloat(item.quantity || 1) * parseFloat(item.price || 0)), 0);
+        // Normalize items to use service_name/quantity/unit_price
+        const normalizedItems = items.map((item, idx) => {
+            const qty = parseFloat(item.quantity ?? 1) || 0;
+            const unit = parseFloat(item.unit_price ?? item.price ?? 0) || 0;
+            const serviceName = item.service_name || item.service || `Item ${idx + 1}`;
+            return {
+                service_name: serviceName,
+                quantity: qty,
+                unit_price: unit
+            };
+        }).filter(i => i.service_name && i.quantity > 0);
 
-    const { data: newInvoice, error: invoiceError } = await supabase
-        .from('invoices')
-        .insert({ patient_id: patientId, appointment_id: appointmentId, total_amount, status, diagnostic: diagnostic })
-        .select().single();
+        const subtotal = normalizedItems.reduce((sum, it) => sum + (it.quantity * it.unit_price), 0);
+        const dType = discount_type || 'none';
+        const dValue = parseFloat(discount_value ?? 0) || 0;
+        let dAmount = 0;
+        if (dType === 'percent') dAmount = subtotal * (dValue / 100);
+        else if (dType === 'flat') dAmount = dValue;
+        if (dAmount > subtotal) dAmount = subtotal;
+        const total_amount = Math.max(0, subtotal - dAmount);
 
-    if (invoiceError) {
-        console.error('Error creating invoice record:', invoiceError);
-        return res.status(500).json({ success: false, message: 'Failed to create invoice.' });
-    }
+        const { data: newInvoice, error: invoiceError } = await supabase
+            .from('invoices')
+            .insert({
+                patient_id: patientId,
+                appointment_id: appointmentId,
+                status,
+                diagnostic,
+                subtotal,
+                discount_type: dType,
+                discount_value: dValue,
+                discount_amount: dAmount,
+                total_amount
+            })
+            .select()
+            .single();
 
-    console.log('Created invoice record with ID:', newInvoice.id);
-    const invoiceItems = items.map(item => ({ invoice_id: newInvoice.id, service_name: item.service, quantity: parseInt(item.quantity), unit_price: parseFloat(item.price) }));
-    
-    const { error: itemsError } = await supabase.from('invoice_items').insert(invoiceItems);
-
-    if (itemsError) {
-        console.error('Error creating invoice items:', itemsError);
-        return res.status(500).json({ success: false, message: 'Invoice created, but failed to save items.' });
-    }
-    
-    if (inventoryUpdates && inventoryUpdates.length > 0) {
-        console.log('Updating stock for inventory items:', inventoryUpdates);
-        const stockUpdatePromises = inventoryUpdates.map(item => 
-            supabase.rpc('decrease_stock', { product_id_in: item.id, quantity_sold: item.quantitySold })
-        );
-        const results = await Promise.all(stockUpdatePromises);
-        const updateError = results.some(r => r.error);
-        if (updateError) {
-            console.error("One or more stock updates failed. This should be investigated.");
-        } else {
-            console.log("Stock levels updated successfully.");
+        if (invoiceError) {
+            console.error('Error creating invoice record:', invoiceError);
+            return res.status(500).json({ success: false, message: 'Failed to create invoice.' });
         }
-    }
 
-    res.status(201).json({ success: true, message: 'Invoice created successfully!', data: { invoiceId: newInvoice.id } });
+        console.log('Created invoice record with ID:', newInvoice.id);
+        if (normalizedItems.length > 0) {
+            const invoiceItems = normalizedItems.map(item => ({
+                invoice_id: newInvoice.id,
+                service_name: item.service_name,
+                quantity: item.quantity,
+                unit_price: item.unit_price
+            }));
+
+            const { error: itemsError } = await supabase.from('invoice_items').insert(invoiceItems);
+            if (itemsError) {
+                console.error('Error creating invoice items:', itemsError);
+                return res.status(500).json({ success: false, message: 'Invoice created, but failed to save items.' });
+            }
+        }
+        
+        if (inventoryUpdates && inventoryUpdates.length > 0) {
+            console.log('Updating stock for inventory items:', inventoryUpdates);
+            const stockUpdatePromises = inventoryUpdates.map(item => 
+                supabase.rpc('decrease_stock', { product_id_in: item.id, quantity_sold: item.quantitySold })
+            );
+            const results = await Promise.all(stockUpdatePromises);
+            const updateError = results.some(r => r.error);
+            if (updateError) {
+                console.error("One or more stock updates failed. This should be investigated.");
+            } else {
+                console.log("Stock levels updated successfully.");
+            }
+        }
+
+        res.status(201).json({ success: true, message: 'Invoice created successfully!', data: { invoiceId: newInvoice.id } });
+    } catch (err) {
+        console.error('Unhandled error creating invoice:', err);
+        res.status(500).json({ success: false, message: 'Failed to create invoice.' });
+    }
 });
 
 // Get All Invoices Route
@@ -591,7 +641,7 @@ app.patch('/api/invoices/:id', async (req, res) => {
     const { id } = req.params;
     console.log(`Received request to update invoice ${id}.`);
     
-    const { patientId, status, items, diagnostic } = req.body;
+    const { patientId, status, items = [], diagnostic, discount_type, discount_value } = req.body;
 
     // In a real application, you'd wrap these steps in a "transaction"
     // to ensure that if one step fails, they all get rolled back.
@@ -608,14 +658,32 @@ app.patch('/api/invoices/:id', async (req, res) => {
     }
 
     // 2. Recalculate the total amount from the new items
-    const total_amount = items.reduce((sum, item) => sum + (parseFloat(item.quantity) * parseFloat(item.price)), 0);
+    const normalizedItems = items.map((item, idx) => {
+        const qty = parseFloat(item.quantity ?? 1) || 0;
+        const unit = parseFloat(item.unit_price ?? item.price ?? 0) || 0;
+        const serviceName = item.service_name || item.service || `Item ${idx + 1}`;
+        return { service_name: serviceName, quantity: qty, unit_price: unit };
+    }).filter(i => i.service_name && i.quantity > 0);
+
+    const subtotal = normalizedItems.reduce((sum, it) => sum + (it.quantity * it.unit_price), 0);
+    const dType = discount_type || 'none';
+    const dValue = parseFloat(discount_value ?? 0) || 0;
+    let dAmount = 0;
+    if (dType === 'percent') dAmount = subtotal * (dValue / 100);
+    else if (dType === 'flat') dAmount = dValue;
+    if (dAmount > subtotal) dAmount = subtotal;
+    const total_amount = Math.max(0, subtotal - dAmount);
 
     // 3. Update the main invoice record
     const { error: invoiceUpdateError } = await supabase
         .from('invoices')
         .update({
             patient_id: patientId,
-            total_amount: total_amount,
+            total_amount,
+            subtotal,
+            discount_type: dType,
+            discount_value: dValue,
+            discount_amount: dAmount,
             status: status,
             diagnostic: diagnostic
         })
@@ -627,11 +695,11 @@ app.patch('/api/invoices/:id', async (req, res) => {
     }
 
     // 4. Prepare and insert the new invoice items
-    const newInvoiceItems = items.map(item => ({
+    const newInvoiceItems = normalizedItems.map(item => ({
         invoice_id: id,
-        service_name: item.service,
-        quantity: parseInt(item.quantity),
-        unit_price: parseFloat(item.price)
+        service_name: item.service_name,
+        quantity: item.quantity,
+        unit_price: item.unit_price
     }));
     
     const { error: itemsInsertError } = await supabase
