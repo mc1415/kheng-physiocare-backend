@@ -287,13 +287,22 @@ app.post('/api/invoices', async (req, res) => {
             inventoryUpdates = [],
             diagnostic = '',
             discount_type,
-            discount_value
+            discount_value,
+            // Legacy/defensive aliases from older clients
+            amount,
+            total_amount: totalAmountFromBody,
+            subtotal: subtotalFromBody
         } = req.body;
+
+        const toNumber = (val) => {
+            const n = parseFloat(val);
+            return Number.isFinite(n) ? n : 0;
+        };
 
         // Normalize items to use service_name/quantity/unit_price
         const normalizedItems = items.map((item, idx) => {
-            const qty = parseFloat(item.quantity ?? 1) || 0;
-            const unit = parseFloat(item.unit_price ?? item.price ?? 0) || 0;
+            const qty = toNumber(item.quantity ?? 1);
+            const unit = toNumber(item.unit_price ?? item.price ?? 0);
             const serviceName = item.service_name || item.service || `Item ${idx + 1}`;
             return {
                 service_name: serviceName,
@@ -302,21 +311,26 @@ app.post('/api/invoices', async (req, res) => {
             };
         }).filter(i => i.service_name && i.quantity > 0);
 
-        const subtotal = normalizedItems.reduce((sum, it) => sum + (it.quantity * it.unit_price), 0);
+        const subtotalFromItems = normalizedItems.reduce((sum, it) => sum + (it.quantity * it.unit_price), 0);
+        const subtotal = subtotalFromItems > 0 ? subtotalFromItems : toNumber(subtotalFromBody);
+
         const dType = discount_type || 'none';
-        const dValue = parseFloat(discount_value ?? 0) || 0;
+        const dValue = toNumber(discount_value);
         let dAmount = 0;
         if (dType === 'percent') dAmount = subtotal * (dValue / 100);
         else if (dType === 'flat') dAmount = dValue;
         if (dAmount > subtotal) dAmount = subtotal;
-        const total_amount = Math.max(0, subtotal - dAmount);
+
+        const totalFromBody = toNumber(totalAmountFromBody ?? amount);
+        const computedTotal = Math.max(0, subtotal - dAmount);
+        const total_amount = totalFromBody > 0 ? totalFromBody : computedTotal;
 
         const { data: newInvoice, error: invoiceError } = await supabase
             .from('invoices')
             .insert({
                 patient_id: patientId,
                 appointment_id: appointmentId,
-                status,
+                status: status || 'Unpaid',
                 diagnostic,
                 subtotal,
                 discount_type: dType,
@@ -641,7 +655,17 @@ app.patch('/api/invoices/:id', async (req, res) => {
     const { id } = req.params;
     console.log(`Received request to update invoice ${id}.`);
     
-    const { patientId, status, items = [], diagnostic, discount_type, discount_value } = req.body;
+    const {
+        patientId,
+        status,
+        items = [],
+        diagnostic,
+        discount_type,
+        discount_value,
+        amount,
+        total_amount: totalAmountFromBody,
+        subtotal: subtotalFromBody
+    } = req.body;
 
     // In a real application, you'd wrap these steps in a "transaction"
     // to ensure that if one step fails, they all get rolled back.
@@ -658,21 +682,29 @@ app.patch('/api/invoices/:id', async (req, res) => {
     }
 
     // 2. Recalculate the total amount from the new items
+    const toNumber = (val) => {
+        const n = parseFloat(val);
+        return Number.isFinite(n) ? n : 0;
+    };
+
     const normalizedItems = items.map((item, idx) => {
-        const qty = parseFloat(item.quantity ?? 1) || 0;
-        const unit = parseFloat(item.unit_price ?? item.price ?? 0) || 0;
+        const qty = toNumber(item.quantity ?? 1);
+        const unit = toNumber(item.unit_price ?? item.price ?? 0);
         const serviceName = item.service_name || item.service || `Item ${idx + 1}`;
         return { service_name: serviceName, quantity: qty, unit_price: unit };
     }).filter(i => i.service_name && i.quantity > 0);
 
-    const subtotal = normalizedItems.reduce((sum, it) => sum + (it.quantity * it.unit_price), 0);
+    const subtotalFromItems = normalizedItems.reduce((sum, it) => sum + (it.quantity * it.unit_price), 0);
+    const subtotal = subtotalFromItems > 0 ? subtotalFromItems : toNumber(subtotalFromBody);
     const dType = discount_type || 'none';
-    const dValue = parseFloat(discount_value ?? 0) || 0;
+    const dValue = toNumber(discount_value);
     let dAmount = 0;
     if (dType === 'percent') dAmount = subtotal * (dValue / 100);
     else if (dType === 'flat') dAmount = dValue;
     if (dAmount > subtotal) dAmount = subtotal;
-    const total_amount = Math.max(0, subtotal - dAmount);
+    const totalFromBody = toNumber(totalAmountFromBody ?? amount);
+    const computedTotal = Math.max(0, subtotal - dAmount);
+    const total_amount = totalFromBody > 0 ? totalFromBody : computedTotal;
 
     // 3. Update the main invoice record
     const { error: invoiceUpdateError } = await supabase
