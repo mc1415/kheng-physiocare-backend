@@ -288,8 +288,6 @@ app.post('/api/invoices', async (req, res) => {
             diagnostic = '',
             discount_type,
             discount_value,
-            // Legacy/defensive aliases from older clients
-            amount,
             total_amount: totalAmountFromBody,
             subtotal: subtotalFromBody
         } = req.body;
@@ -321,7 +319,7 @@ app.post('/api/invoices', async (req, res) => {
         else if (dType === 'flat') dAmount = dValue;
         if (dAmount > subtotal) dAmount = subtotal;
 
-        const totalFromBody = toNumber(totalAmountFromBody ?? amount);
+        const totalFromBody = toNumber(totalAmountFromBody);
         const computedTotal = Math.max(0, subtotal - dAmount);
         const total_amount = totalFromBody > 0 ? totalFromBody : computedTotal;
 
@@ -662,7 +660,6 @@ app.patch('/api/invoices/:id', async (req, res) => {
         diagnostic,
         discount_type,
         discount_value,
-        amount,
         total_amount: totalAmountFromBody,
         subtotal: subtotalFromBody
     } = req.body;
@@ -702,7 +699,7 @@ app.patch('/api/invoices/:id', async (req, res) => {
     if (dType === 'percent') dAmount = subtotal * (dValue / 100);
     else if (dType === 'flat') dAmount = dValue;
     if (dAmount > subtotal) dAmount = subtotal;
-    const totalFromBody = toNumber(totalAmountFromBody ?? amount);
+    const totalFromBody = toNumber(totalAmountFromBody);
     const computedTotal = Math.max(0, subtotal - dAmount);
     const total_amount = totalFromBody > 0 ? totalFromBody : computedTotal;
 
