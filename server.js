@@ -8,6 +8,7 @@ const { createClient } = require('@supabase/supabase-js');
 require('dotenv').config();
 
 // 2. Initialize Express App & Supabase Client
+const BUILD_TAG = 'invoice-fix-2025-11-29-08h';
 const app = express();
 const PORT = 3000;
 
@@ -38,7 +39,7 @@ app.use(cors({
 
 // Test route
 app.get('/api/test', (req, res) => {
-    res.json({ message: 'API is connected and running!', timestamp: new Date().toISOString() });
+    res.json({ message: 'API is connected and running!', timestamp: new Date().toISOString(), build: BUILD_TAG });
 });
 
 // Admin Login Route
@@ -276,7 +277,7 @@ app.get('/api/dashboard/advanced-stats', async (req, res) => {
 });
 
 app.post('/api/invoices', async (req, res) => {
-    console.log('Received request to create a new invoice.');
+    console.log(`[${BUILD_TAG}] Received request to create a new invoice.`);
 
     try {
         const {
@@ -323,19 +324,23 @@ app.post('/api/invoices', async (req, res) => {
         const computedTotal = Math.max(0, subtotal - dAmount);
         const total_amount = totalFromBody > 0 ? totalFromBody : computedTotal;
 
+        const insertPayload = {
+            patient_id: patientId,
+            appointment_id: appointmentId,
+            status: status || 'Unpaid',
+            diagnostic,
+            subtotal,
+            discount_type: dType,
+            discount_value: dValue,
+            discount_amount: dAmount,
+            total_amount
+        };
+
+        console.log(`[${BUILD_TAG}] Insert payload keys:`, Object.keys(insertPayload));
+
         const { data: newInvoice, error: invoiceError } = await supabase
             .from('invoices')
-            .insert({
-                patient_id: patientId,
-                appointment_id: appointmentId,
-                status: status || 'Unpaid',
-                diagnostic,
-                subtotal,
-                discount_type: dType,
-                discount_value: dValue,
-                discount_amount: dAmount,
-                total_amount
-            })
+            .insert(insertPayload)
             .select()
             .single();
 
@@ -651,7 +656,7 @@ app.patch('/api/invoices/:id/pay', async (req, res) => {
 // --- Update (Edit) Invoice Route ---
 app.patch('/api/invoices/:id', async (req, res) => {
     const { id } = req.params;
-    console.log(`Received request to update invoice ${id}.`);
+    console.log(`[${BUILD_TAG}] Received request to update invoice ${id}.`);
     
     const {
         patientId,
@@ -704,18 +709,22 @@ app.patch('/api/invoices/:id', async (req, res) => {
     const total_amount = totalFromBody > 0 ? totalFromBody : computedTotal;
 
     // 3. Update the main invoice record
+    const updatePayload = {
+        patient_id: patientId,
+        total_amount,
+        subtotal,
+        discount_type: dType,
+        discount_value: dValue,
+        discount_amount: dAmount,
+        status: status,
+        diagnostic: diagnostic
+    };
+
+    console.log(`[${BUILD_TAG}] Update payload keys:`, Object.keys(updatePayload));
+
     const { error: invoiceUpdateError } = await supabase
         .from('invoices')
-        .update({
-            patient_id: patientId,
-            total_amount,
-            subtotal,
-            discount_type: dType,
-            discount_value: dValue,
-            discount_amount: dAmount,
-            status: status,
-            diagnostic: diagnostic
-        })
+        .update(updatePayload)
         .eq('id', id);
 
     if (invoiceUpdateError) {
