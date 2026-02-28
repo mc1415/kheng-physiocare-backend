@@ -10,24 +10,48 @@ require('dotenv').config();
 // 2. Initialize Express App & Supabase Client
 const BUILD_TAG = 'invoice-fix-2025-11-29-08h';
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+const supabaseUrl = process.env.SUPABASE_URL || '';
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY || '';
+const missingEnvVars = [];
+
+if (!supabaseUrl) missingEnvVars.push('SUPABASE_URL');
+if (!supabaseKey) missingEnvVars.push('SUPABASE_SERVICE_KEY');
+
+if (missingEnvVars.length > 0) {
+    console.error(
+        `Missing required environment variables: ${missingEnvVars.join(', ')}. ` +
+        'Create a .env file from .env.example before starting the server.'
+    );
+    process.exit(1);
+}
+
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // 3. Define Middleware
-app.use(express.json());
+// Allow larger JSON payloads (e.g., base64 image uploads from admin inventory).
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-const allowedOrigins = [
+const defaultAllowedOrigins = [
   'https://kheng-physiocare.netlify.app', 
   'http://127.0.0.1:5500', // For local testing if you use Live Server
+  'http://localhost:5500',
   'http://localhost:8888'  // For local testing with `netlify dev`
 ];
 
+const envAllowedOrigins = (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+const allowedOrigins = [...new Set([...defaultAllowedOrigins, ...envAllowedOrigins])];
+
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
+    const isLocalhost = /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin || '');
+    if (!origin || isLocalhost || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -133,7 +157,10 @@ app.post('/api/staff', async (req, res) => {
 // Get All Patients (This version with dynamic Last Visit is correct)
 app.get('/api/patients', async (req, res) => {
     console.log('Received request to get all patients.');
-    const { data: patients, error: patientsError } = await supabase.from('patients').select(`id, full_name, phone_number, avatar_url, gender, staff (id, full_name)`).order('id', { ascending: true });
+    const { data: patients, error: patientsError } = await supabase
+        .from('patients')
+        .select(`id, full_name, phone_number, avatar_url, gender, staff:staff!patients_assigned_therapist_id_fkey (id, full_name)`)
+        .order('id', { ascending: true });
     if (patientsError) {
         console.error('Error fetching patient data:', patientsError);
         return res.status(500).json({ success: false, message: 'Failed to fetch patient data.' });
@@ -216,18 +243,56 @@ app.get('/api/dashboard/advanced-stats', async (req, res) => {
         const [
             revenueTodayRes, appointmentsTodayRes, newPatientsTodayRes,
             cancellationsTodayRes, todaysScheduleRes, allPatientsDobRes,
-            weeklyAppointmentsRes, revenueYesterdayRes, appointmentsYesterdayRes
+            revenueYesterdayRes, appointmentsYesterdayRes
         ] = await Promise.all([
             supabase.from('invoices').select('total_amount').eq('status', 'Paid').gte('created_at', todayStart.toISOString()).lt('created_at', todayEnd.toISOString()),
             supabase.from('appointments').select('*', { count: 'exact', head: true }).gte('start_time', todayStart.toISOString()).lt('start_time', todayEnd.toISOString()),
             supabase.from('patients').select('*', { count: 'exact', head: true }).gte('created_at', todayStart.toISOString()).lt('created_at', todayEnd.toISOString()),
             supabase.from('appointments').select('*', { count: 'exact', head: true }).eq('status', 'Cancelled').gte('start_time', todayStart.toISOString()).lt('start_time', todayEnd.toISOString()),
-            supabase.from('appointments').select('start_time, title, status, staff(full_name)').gte('start_time', todayStart.toISOString()).lt('start_time', todayEnd.toISOString()).order('start_time', { ascending: true }),
+            supabase.from('appointments').select('start_time, title, status, staff:staff!appointments_staff_id_fkey(full_name)').gte('start_time', todayStart.toISOString()).lt('start_time', todayEnd.toISOString()).order('start_time', { ascending: true }),
             supabase.from('patients').select('date_of_birth'),
-            supabase.rpc('get_daily_appointment_counts'),
             supabase.from('invoices').select('total_amount').eq('status', 'Paid').gte('created_at', yesterdayStart.toISOString()).lt('created_at', todayStart.toISOString()),
             supabase.from('appointments').select('*', { count: 'exact', head: true }).gte('start_time', yesterdayStart.toISOString()).lt('start_time', todayStart.toISOString())
         ]);
+
+        let weeklyAppointments = [];
+        const { data: weeklyRpcData, error: weeklyRpcError } = await supabase.rpc('get_daily_appointment_counts');
+        if (!weeklyRpcError && Array.isArray(weeklyRpcData)) {
+            weeklyAppointments = weeklyRpcData;
+        } else {
+            const weekStart = new Date(todayStart);
+            weekStart.setUTCDate(weekStart.getUTCDate() - 6);
+
+            const { data: weeklyRaw, error: weeklyRawError } = await supabase
+                .from('appointments')
+                .select('start_time')
+                .gte('start_time', weekStart.toISOString())
+                .lt('start_time', todayEnd.toISOString());
+
+            if (weeklyRawError) {
+                console.warn('Could not load weekly appointment counts:', weeklyRawError.message);
+            } else {
+                const countsByDay = new Map();
+                for (let i = 0; i < 7; i++) {
+                    const d = new Date(weekStart);
+                    d.setUTCDate(weekStart.getUTCDate() + i);
+                    countsByDay.set(d.toISOString().split('T')[0], 0);
+                }
+
+                for (const row of weeklyRaw || []) {
+                    if (!row.start_time) continue;
+                    const day = new Date(row.start_time).toISOString().split('T')[0];
+                    if (countsByDay.has(day)) {
+                        countsByDay.set(day, countsByDay.get(day) + 1);
+                    }
+                }
+
+                weeklyAppointments = Array.from(countsByDay.entries()).map(([appointment_date, appointment_count]) => ({
+                    appointment_date,
+                    appointment_count
+                }));
+            }
+        }
         
         // --- Process Revenue and Trends ---
         const todaysRevenue = (revenueTodayRes.data || []).reduce((sum, inv) => sum + (inv.total_amount || 0), 0);
@@ -264,7 +329,7 @@ app.get('/api/dashboard/advanced-stats', async (req, res) => {
             trends: { revenue: revenueTrend.toFixed(0), appointments: appointmentTrend, newPatients: newPatientsToday },
             todaysSchedule: todaysScheduleRes.data || [],
             ageDemographics: [ageGroups.under18, ageGroups['18-30'], ageGroups['31-50'], ageGroups.over50],
-            weeklyAppointments: weeklyAppointmentsRes.data || []
+            weeklyAppointments
         };
         
         console.log("Sending complete advanced stats to frontend.");
@@ -367,9 +432,36 @@ app.post('/api/invoices', async (req, res) => {
         
         if (inventoryUpdates && inventoryUpdates.length > 0) {
             console.log('Updating stock for inventory items:', inventoryUpdates);
-            const stockUpdatePromises = inventoryUpdates.map(item => 
-                supabase.rpc('decrease_stock', { product_id_in: item.id, quantity_sold: item.quantitySold })
-            );
+            const stockUpdatePromises = inventoryUpdates.map(async (item) => {
+                const quantitySold = Math.max(0, Number(item.quantitySold) || 0);
+                if (!item.id || quantitySold <= 0) return { error: null };
+
+                const rpcResult = await supabase.rpc('decrease_stock', {
+                    product_id_in: item.id,
+                    quantity_sold: quantitySold
+                });
+
+                if (!rpcResult.error) return rpcResult;
+
+                console.warn(`decrease_stock RPC unavailable, using fallback update for product ${item.id}.`);
+                const { data: product, error: productError } = await supabase
+                    .from('products')
+                    .select('stock_level')
+                    .eq('id', item.id)
+                    .single();
+
+                if (productError) return { error: productError };
+
+                const currentStock = Number(product.stock_level) || 0;
+                const newStockLevel = Math.max(0, currentStock - quantitySold);
+
+                const { error: updateError } = await supabase
+                    .from('products')
+                    .update({ stock_level: newStockLevel })
+                    .eq('id', item.id);
+
+                return { error: updateError || null };
+            });
             const results = await Promise.all(stockUpdatePromises);
             const updateError = results.some(r => r.error);
             if (updateError) {
@@ -414,7 +506,7 @@ app.get('/api/products', async (req, res) => {
     const { data, error } = await supabase
         .from('products')
         // Explicitly list all the columns you need.
-        .select('id, name, sku, category, unit_price, stock_level')
+        .select('id, name, sku, category, unit_price, stock_level, image_url')
         .order('name', { ascending: true });
 
     if (error) {
@@ -430,11 +522,11 @@ app.get('/api/products', async (req, res) => {
 app.post('/api/products', async (req, res) => {
     console.log('Received request to create a new product.');
     // The keys in req.body now directly match the database columns
-    const { name, sku, category, unit_price, stock_level } = req.body;
+    const { name, sku, category, unit_price, stock_level, image_url } = req.body;
 
     const { data, error } = await supabase
         .from('products')
-        .insert([{ name, sku, category, unit_price, stock_level }]) // This is much cleaner now
+        .insert([{ name, sku, category, unit_price, stock_level, image_url }]) // This is much cleaner now
         .select();
 
     if (error) { /* ... error handling ... */ }
@@ -487,7 +579,7 @@ app.get('/api/appointments', async (req, res) => {
     
     let query = supabase
         .from('appointments')
-        .select(`id, start_time, end_time, title, status, patient_id, staff ( id, full_name )`);
+        .select(`id, start_time, end_time, title, status, patient_id, staff:staff!appointments_staff_id_fkey ( id, full_name )`);
 
     // Check for patient_id filter from the query string
     if (req.query.patient_id) {
@@ -604,7 +696,7 @@ app.get('/api/invoices/:id', async (req, res) => {
     // First, get the main invoice details and the patient's name
     const { data: invoice, error: invoiceError } = await supabase
         .from('invoices')
-        .select(`*, patients (full_name, date_of_birth)`)
+        .select(`*, patients (full_name, date_of_birth, gender)`)
         .eq('id', id)
         .single();
 
@@ -924,7 +1016,7 @@ app.get('/api/portal/dashboard', authenticatePatient, async (req, res) => {
         // Run all queries concurrently
         const [appointmentsRes, assignedExercisesRes, clinicSettingsRes] = await Promise.all([
             // Join with staff to get the therapist's name
-            supabase.from('appointments').select('start_time, status, staff(full_name)').eq('patient_id', patientId).order('start_time', { ascending: false }),
+            supabase.from('appointments').select('start_time, status, staff:staff!appointments_staff_id_fkey(full_name)').eq('patient_id', patientId).order('start_time', { ascending: false }),
             supabase.from('assigned_exercises').select('*, exercises(title, description, video_path)').eq('patient_id', patientId),
             supabase.from('settings').select('clinic_name, phone_number, address').eq('id', 1).single() // Fetch clinic info
         ]);
@@ -1065,7 +1157,7 @@ app.get('/api/patients/:id/notes', async (req, res) => {
     const { id } = req.params;
     const { data, error } = await supabase
         .from('clinical_notes')
-        .select('*, staff(full_name)')
+        .select('*, staff:staff!clinical_notes_created_by_fkey(full_name)')
         .eq('patient_id', id)
         .order('note_date', { ascending: false });
         
@@ -1076,12 +1168,12 @@ app.get('/api/patients/:id/notes', async (req, res) => {
 // POST a new note for a patient
 app.post('/api/patients/:id/notes', async (req, res) => {
     const { id: patient_id } = req.params;
-    const noteData = req.body;
+    const noteData = req.body || {};
     // In a real app, 'created_by' would come from the logged-in user's token
     
     const { data, error } = await supabase
         .from('clinical_notes')
-        .insert({ ...noteData, patient_id })
+        .insert({ ...noteData, patient_id, note_date: noteData.note_date || new Date().toISOString().split('T')[0] })
         .select().single();
         
     if (error) return res.status(400).json({ success: false, message: error.message });
